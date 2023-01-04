@@ -1,0 +1,97 @@
+PROGRAM PLC_PRG
+VAR
+	state: UINT:=0;
+	RFID: dc_ecp.Dtm425;
+	DATA: dc_ecp.st_CPF_RfidData;
+	TCPClient: dc_ecp.TcpClientByteStream;
+	DATAIN: STRING;
+	DATAOUT: DWORD;
+	TEST: STRING;
+	Station_ID: STRING;
+	dtNow: DATE_AND_TIME;
+	dtFunctionBlock: DTU.GetDateAndTime;
+	xml_data: STRING(120);
+	RECIEVED: INT;
+	timer_0: TON;
+END_VAR	
+
+CASE state OF
+	0: // Initialize parameters, start belt and engage stopper
+	GVL.xQA1_RIGHT:=TRUE;
+	GVL.xMB20:=FALSE; 
+	RFID.ClearError();
+	Station_ID:='STPCL_08';
+	state:=1;
+	
+	1: // Initialize RFID and TCP connection
+	IF RFID.xReady THEN
+		RFID.ClearError();
+		RFID.Connect(usiNodeId:=32, usiNetworkId:=0,usiChannel:=1);
+		Tcpclient.Connect(sIP:='172.20.66.43',uiPort:=11562); 
+		state:=2;
+	END_IF
+
+	2: // Wait for RFID and TCP connection
+	IF RFID.xReady AND tcpclient.xConnected AND tcpclient.xReady THEN
+		state:=3;
+	END_IF
+	
+	3: // Wait for carrier (Stop new carrier)
+	IF GVL.xBG21 = TRUE THEN 
+		GVL.xMB20:=FALSE; 
+		state:=4;
+	END_IF
+	
+	4: // Read RFID and send to server
+	RFID.ReadTag(uiStartAddress:=0, uiDataLength:=SIZEOF(DATA),ADR(DATA));
+	dtFunctionBlock(xExecute:=TRUE); // Get current date and time for timestamp
+	state:=5;
+	
+	5: // If RFID is ready and date and time was found, concat xml and send with tcp client
+	IF RFID.xReady AND dtFunctionBlock.xDone THEN 
+		DATAOUT:=dc_ecp.SwapWORD(DATA.uiCarrierID); // Swap bit order
+		dtNow:=dtFunctionBlock.dtDateAndTime;
+		xml_data:=CONCAT('<station id="',station_ID); 
+		xml_data:=CONCAT(xml_data, '"> <carrier id="');
+		xml_data:=CONCAT(xml_data, DWORD_TO_STRING(DATAOUT));
+		xml_data:=CONCAT(xml_data, '"/> <date value="');
+		xml_data:=CONCAT(xml_data, DT_TO_STRING(dtNow));
+		xml_data:=CONCAT(xml_data, '"/></station>');
+		tcpClient.Send(pToSend:=ADR(xml_data), uiSizeToSend:=SIZEOF(xml_data)); 
+		state:=6;
+	END_IF
+	
+	6: // Wait for data to be received
+	IF TCPclient.TryToReceive(pToReceive:=ADR(DATAIN),uiSizeToReceive:=SIZEOF(DATAIN)) THEN 
+		TCPClient.Receive(pToReceive:=ADR(DATAIN),uiSizeToReceive:=SIZEOF(DATAIN));
+		state:=7;
+	END_IF
+	
+	7: // Store received data in INT parameter
+	RECIEVED:=STRING_TO_INT(DATAIN); 
+	state:=10;
+	
+	10: // Convert INT to TIME and set timer
+	timer_0(IN:=TRUE, PT:=INT_TO_TIME(RECIEVED)); 
+	state:=11;
+	
+	11: // Wait for timer, then release stopper
+	IF timer_0.Q THEN  //.Q means reached
+		GVl.xMB20:=TRUE; 
+		state:=20;
+	END_IF
+	
+	20: // Wait for carrier to pass
+	IF GVL.xBG21 = FALSE THEN
+		GVL.xMB20:=FALSE; 
+		state:=1;
+		timer_0.IN:=FALSE;
+	END_IF
+	
+END_CASE
+
+// Initialization of functions
+timer_0();
+TCPClient();
+RFID();
+dtFunctionBlock();
