@@ -11,5 +11,5 @@ State machine design which handles execution of hardware functions via the festo
 0. Adapt the main.py IP setting to match the server machine IP (line 19)<br />
 1. Execute the main.py to initatite the TCP/IP server.<br />
 2. Adapt the ST_client_code.txt IP setting to match the server machine IP (line 30)<br />
-3. Run the ST_client_code.txt on a standard Festo CP Factory straight transportation module.<br />
+3. Run the ST_client_code.txt on a Festo CP Factory straight module.<br />
 4. The events are logged to server_log.txt
